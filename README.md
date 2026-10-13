@@ -5,14 +5,19 @@ Só usa padrões do GRBL: `G21 G90 G17 G94` + `G0/G1` (nenhum `$xx=`, nenhum `M3
 
 ## Instalação
 ```bash
-python -m venv --system-site-packages .venv && .venv/bin/pip install -r requirements.txt
 sudo usermod -aG dialout $USER   # acesso à porta serial no Linux (relogar depois)
+./run.sh serve                   # na 1ª execução cria a .venv e instala o requirements.txt
 ```
+(Manual: `python -m venv --system-site-packages .venv && .venv/bin/pip install -r requirements.txt`)
+
+## Scripts
+- `./run.sh <args>` — wrapper de `.venv/bin/python -m gcodepen <args>`; funciona de qualquer diretório.
+- `./kill.sh` — encerra o servidor GCodePen, em qualquer porta.
 
 ## Interface web
 ```bash
 export GEMINI_API_KEY=...   # opcional: habilita 🎤 Falar e ✏️ Desenhar (modelo: GEMINI_MODEL, padrão gemini-flash-latest)
-.venv/bin/python -m gcodepen serve --port 8000     # http://127.0.0.1:8000 (só localhost)
+./run.sh serve --port 8000     # http://127.0.0.1:8000 (só localhost); ./kill.sh para parar
 ```
 Texto + fonte (Hershey de traço único, ou TTF/OTF do sistema), preview, G-code, PDF (texto por página),
 voz→texto, desenho por IA (experimental) e painel **Máquina**: conectar, jog, zerar, caneta ↑/↓,
@@ -20,8 +25,8 @@ enviar G-code com controle de buffer (character-counting), pausar/continuar/para
 
 ## CLI
 ```bash
-.venv/bin/python -m gcodepen text "Olá, mundo" --font futural --size 8 --zmin -1 --zmax 3 -o saida.gcode
-.venv/bin/python -m gcodepen text --pdf doc.pdf --page 1 --width 180 -o p1.gcode
+./run.sh text "Olá, mundo" --font futural --size 8 --zmin -1 --zmax 3 -o saida.gcode
+./run.sh text --pdf doc.pdf --page 1 --width 180 -o p1.gcode
 ```
 
 ## Primeiro teste na máquina
