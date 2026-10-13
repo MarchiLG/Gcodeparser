@@ -1,0 +1,5 @@
+pyserial
+fonttools
+Hershey-Fonts
+pypdf
+pytest

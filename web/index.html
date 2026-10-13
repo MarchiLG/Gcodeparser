@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GCodePen</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>GCodePen</h1><span class="sub">texto → G-code para caneta no GRBL</span></header>
+<main>
+  <section class="panel">
+    <label>Texto
+      <textarea id="text" rows="6" placeholder="Digite o texto a escrever…">Olá, mundo!</textarea>
+    </label>
+    <div class="row pdfrow">
+      <button id="mic" class="sec" disabled title="Defina GEMINI_API_KEY">🎤 Falar</button>
+      <button id="draw" class="sec" disabled title="Defina GEMINI_API_KEY">✏️ Desenhar (IA, experimental)</button>
+      <label class="dsz">tam. <input id="draw_size" type="number" value="80" min="5"> mm</label>
+    </div>
+    <div class="row pdfrow">
+      <label class="filebtn">📄 Abrir PDF<input id="pdf" type="file" accept="application/pdf" hidden></label>
+      <span id="pdfinfo" hidden><button id="pgprev" class="sec">‹</button> pág. <b id="pgn">1</b>/<span id="pgt">1</span> <button id="pgnext" class="sec">›</button></span>
+    </div>
+    <div class="grid">
+      <label>Fonte
+        <select id="font"></select>
+      </label>
+      <label>Alinhamento
+        <select id="align"><option value="left">Esquerda</option><option value="center">Centro</option><option value="right">Direita</option></select>
+      </label>
+      <label>Tamanho (mm)<input id="size" type="number" value="8" min="1" step="0.5"></label>
+      <label>Largura da área (mm)<input id="width" type="number" value="" min="1" placeholder="sem quebra"></label>
+      <label>Espaço entre linhas<input id="line_spacing" type="number" value="1" step="0.1" min="0.5"></label>
+      <label>Espaço entre letras<input id="letter_spacing" type="number" value="0" step="0.05"></label>
+    </div>
+    <h2>Caneta (eixo Z)</h2>
+    <div class="grid">
+      <label>Z mín — escreve<input id="zmin" type="number" value="-1" step="0.1"></label>
+      <label>Z máx — levantada<input id="zmax" type="number" value="3" step="0.1"></label>
+      <label>Avanço escrita (mm/min)<input id="feed" type="number" value="400" min="1"></label>
+      <label>Avanço Z (mm/min)<input id="zfeed" type="number" value="100" min="1"></label>
+    </div>
+    <label class="check"><input id="zero" type="checkbox"> Emitir <code>G92 X0 Y0</code> (posição atual = origem)</label>
+    <div id="msgs"></div>
+  </section>
+  <section class="panel">
+    <div class="bar">
+      <strong>Pré-visualização</strong>
+      <span id="stats" class="stats"></span>
+    </div>
+    <div class="canvaswrap"><canvas id="cv" width="900" height="500"></canvas></div>
+    <div class="legend"><i class="w"></i> escreve <i class="t"></i> deslocamento (caneta levantada)</div>
+    <div class="row">
+      <button id="copy">Copiar G-code</button>
+      <button id="download">Baixar .gcode</button>
+    </div>
+    <details><summary>G-code</summary><pre id="gcode"></pre></details>
+  </section>
+  <section class="panel" id="machine">
+    <div class="bar"><strong>Máquina (GRBL)</strong><span id="mstate" class="stats">desconectado</span></div>
+    <div class="row">
+      <select id="port"></select>
+      <button id="refreshPorts" class="sec" title="Atualizar portas">↻</button>
+      <button id="connect">Conectar</button>
+    </div>
+    <div id="mctl" hidden>
+      <div class="pos"><span>X <b id="px">–</b></span><span>Y <b id="py">–</b></span><span>Z <b id="pz">–</b></span><small>(trabalho, mm)</small></div>
+      <div class="jog">
+        <div class="pad">
+          <span></span><button data-j="y+">Y+</button><span></span>
+          <button data-j="x-">X−</button><button data-j="home" class="sec">⌂</button><button data-j="x+">X+</button>
+          <span></span><button data-j="y-">Y−</button><span></span>
+        </div>
+        <div class="pad z"><button data-j="z+">Z+</button><button data-j="z-">Z−</button></div>
+        <div class="jopt">
+          <label>Passo (mm)<select id="step"><option>0.1</option><option>1</option><option selected>10</option><option>50</option></select></label>
+          <label>Avanço jog<input id="jfeed" type="number" value="500" min="1"></label>
+        </div>
+      </div>
+      <div class="row wrap">
+        <button data-m="zeroxy" class="sec">Zerar XY aqui</button>
+        <button data-m="zeroz" class="sec">Zerar Z aqui</button>
+        <button data-m="penup" class="sec">Caneta ↑ (Z máx)</button>
+        <button data-m="pendown" class="sec">Caneta ↓ (Z mín)</button>
+        <button data-m="home" class="sec">$H Home</button>
+        <button data-m="unlock" class="sec">$X Destravar</button>
+      </div>
+      <div class="row wrap">
+        <button id="run">▶ Enviar G-code</button>
+        <button id="pause" class="sec">⏸ Pausar</button>
+        <button id="resume" class="sec">⏵ Continuar</button>
+        <button id="stop" class="danger">⏹ Parar</button>
+      </div>
+      <progress id="prog" value="0" max="1"></progress> <small id="progtxt"></small>
+      <div class="row"><input id="cmd" placeholder="Comando manual (ex.: G0 Z3, $$)" autocomplete="off"><button id="sendcmd" class="sec">Enviar</button></div>
+      <pre id="console"></pre>
+    </div>
+    <div id="mmsg"></div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
