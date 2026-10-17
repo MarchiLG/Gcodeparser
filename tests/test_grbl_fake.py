@@ -115,3 +115,50 @@ def test_send_line_and_jog():
     g.jog(x=1, z=-0.5, feed=300)
     assert fake.lines[-1] == "$J=G91 G21 X1 Z-0.5 F300"
     g.disconnect()
+
+
+def test_jog_hold_streams_many_commands_then_cancels():
+    fake, g = make()
+    g.jog_hold(1, 0, 0, 600)
+    for _ in range(3):                 # keep-alive com a mesma direção não reinicia a thread
+        time.sleep(0.3)
+        g.jog_hold(1, 0, 0, 600)
+    n = len([l for l in fake.lines if l.startswith("$J=")])
+    assert n >= 4, fake.lines          # vários comandos, não um só
+    assert all(l == "$J=G91 G21 X1.5000 F600" for l in fake.lines if l.startswith("$J="))
+    assert 0x85 not in fake.realtime
+    g.jog_stop()
+    assert 0x85 in fake.realtime and not g.jogging
+    sent = len(fake.lines)
+    time.sleep(0.3)
+    assert len(fake.lines) == sent     # nada mais é enviado depois de soltar
+    g.disconnect()
+
+
+def test_jog_hold_stops_without_keepalive():
+    fake, g = make()
+    g.jog_hold(0, -1, 0, 300)
+    wait(lambda: not g.jogging, t=3)   # expira sozinho (cliente sumiu)
+    assert 0x85 in fake.realtime
+    g.disconnect()
+
+
+def test_jog_hold_throttles_to_lookahead():
+    fake, g = make()
+    g.jog_hold(1, 1, 0, 600)
+    time.sleep(0.5)
+    n = len([l for l in fake.lines if l.startswith("$J=")])
+    assert n <= 6                      # ~0.5 s / 0.15 s + lookahead, não centenas
+    g.jog_stop()
+    g.disconnect()
+
+
+def test_send_line_refused_while_jog_hold():
+    import pytest
+    from gcodepen.grbl import GrblError
+    fake, g = make()
+    g.jog_hold(1, 0, 0, 600)
+    with pytest.raises(GrblError):
+        g.send_line("G0 X0")
+    g.jog_stop()
+    g.disconnect()

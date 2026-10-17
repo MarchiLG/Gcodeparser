@@ -23,8 +23,17 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--line-spacing", type=float, default=1.0)
     t.add_argument("--letter-spacing", type=float, default=0.0)
     t.add_argument("--align", choices=["left", "center", "right"], default="left")
-    t.add_argument("--width", type=float, default=None, help="largura da área em mm (quebra de linha)")
+    t.add_argument("--width", type=float, default=None, help="largura da área em mm (padrão: automática pelo curso)")
     t.add_argument("--margin", type=float, default=0.0)
+    t.add_argument("--travel-x", type=float, default=200.0, help="curso máx. de X em mm ($130); define a quebra de linha")
+    t.add_argument("--travel-y", type=float, default=200.0, help="curso máx. de Y em mm ($131)")
+    t.add_argument("--quadrant", type=int, choices=[1, 2, 3, 4], default=4,
+                   help="quadrante do espaço de trabalho (4 = X+ e Y−, padrão)")
+    t.add_argument("--rotate", type=float, default=0.0, help="gira a folha (graus, anti-horário)")
+    t.add_argument("--pen", choices=["z", "servo"], default="z", help="caneta pelo eixo Z ou servo no PWM do spindle (M3 S)")
+    t.add_argument("--pen-up", type=float, default=700.0, help="servo: S com a caneta levantada")
+    t.add_argument("--pen-down", type=float, default=300.0, help="servo: S com a caneta no papel")
+    t.add_argument("--pen-dwell", type=float, default=0.25, help="servo: espera em s após cada troca")
     t.add_argument("--zmin", type=float, default=-1.0, help="Z com a caneta no papel (escreve)")
     t.add_argument("--zmax", type=float, default=3.0, help="Z com a caneta levantada")
     t.add_argument("--feed", type=float, default=400.0, help="avanço de escrita mm/min")
@@ -61,10 +70,13 @@ def main(argv: list[str] | None = None) -> int:
     font = load_font(args.font)
     strokes = layout_text(text, font, LayoutOptions(
         size=args.size, line_spacing=args.line_spacing, letter_spacing=args.letter_spacing,
-        align=args.align, max_width=args.width, margin=args.margin))
+        align=args.align, max_width=args.width, margin=args.margin,
+        travel=(args.travel_x, args.travel_y), rotation=args.rotate, quadrant=args.quadrant))
     res = generate(strokes, GcodeOptions(
         zmin=args.zmin, zmax=args.zmax, feed_xy=args.feed, feed_z=args.zfeed,
-        travel_feed=args.travel_feed, zero=args.zero, optimize=not args.no_optimize))
+        travel_feed=args.travel_feed, zero=args.zero, optimize=not args.no_optimize,
+        max_travel=(args.travel_x, args.travel_y, GcodeOptions.max_travel[2]), quadrant=args.quadrant,
+        pen=args.pen, pen_up=args.pen_up, pen_down=args.pen_down, pen_dwell=args.pen_dwell))
     for w in res.warnings:
         print(f"aviso: {w}", file=sys.stderr)
     if args.output:

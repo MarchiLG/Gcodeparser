@@ -10,7 +10,8 @@ from pathlib import Path
 from .fonts import HERSHEY_DEFAULT, hershey_names, load_font, system_fonts
 from .gcode import GcodeOptions, generate
 from .grbl import Grbl, GrblError, list_ports
-from .layout import LayoutOptions, layout_text
+from .layout import LayoutOptions, bounds, layout_text, place
+from .profiles import ProfileStore
 from .voice import AIError
 
 _log: list = []      # (seq, tipo, texto) — console serial incremental
@@ -27,6 +28,7 @@ def _on_line(kind: str, text: str):
 
 grbl = Grbl(on_line=_on_line)
 ALLOWED_HOSTS: set[str] = set()
+profiles = ProfileStore()
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 _font_cache: dict[str, object] = {}
@@ -48,12 +50,31 @@ def _num(d: dict, key: str, default, lo=None, hi=None):
     return v
 
 
+def _travel(req: dict) -> tuple[float, float]:
+    return _num(req, "travel_x", 200.0, 1, 100000), _num(req, "travel_y", 200.0, 1, 100000)
+
+
+def _quadrant(req: dict) -> int:
+    q = int(_num(req, "quadrant", 4))
+    if q not in (1, 2, 3, 4):
+        raise ValueError("'quadrant' deve ser 1, 2, 3 ou 4")
+    return q
+
+
 def _gcode_opts(req: dict) -> GcodeOptions:
+    pen = req.get("pen", "z")
+    if pen not in ("z", "servo"):
+        raise ValueError("'pen' deve ser 'z' ou 'servo'")
+    tx, ty = _travel(req)
     return GcodeOptions(
         zmin=_num(req, "zmin", -1.0), zmax=_num(req, "zmax", 3.0),
         feed_xy=_num(req, "feed", 400.0, 1, 100000), feed_z=_num(req, "zfeed", 100.0, 1, 100000),
         travel_feed=_num(req, "travel_feed", None, 1, 100000),
         zero=bool(req.get("zero")), optimize=bool(req.get("optimize", True)),
+        max_travel=(tx, ty, GcodeOptions.max_travel[2]), quadrant=_quadrant(req),
+        max_rate=(_num(req, "rate_x", 500.0, 1, 1000000), _num(req, "rate_y", 500.0, 1, 1000000), GcodeOptions.max_rate[2]),
+        pen=pen, pen_up=_num(req, "pen_up", 700.0, 0, 100000), pen_down=_num(req, "pen_down", 300.0, 0, 100000),
+        pen_dwell=_num(req, "pen_dwell", 0.25, 0, 10), spindle_max=_num(req, "spindle_max", 1000.0, 1, 1000000),
     )
 
 
@@ -75,10 +96,16 @@ def build_job(req: dict):
         align=req.get("align", "left") if req.get("align") in ("left", "center", "right") else "left",
         max_width=_num(req, "width", None, 1, 5000),
         margin=_num(req, "margin", 0.0, 0, 1000),
+        travel=_travel(req), rotation=_num(req, "rotation", 0.0, -3600, 3600), quadrant=_quadrant(req),
     )
     gopts = _gcode_opts(req)
     strokes = layout_text(text, font, lopts)
     return generate(strokes, gopts)
+
+
+def _dir(req: dict, key: str) -> int:
+    v = float(req.get(key, 0))
+    return (v > 0) - (v < 0)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -120,6 +147,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ports": list_ports()})
         if path == "/api/serial/status":
             return self._serial_status()
+        if path == "/api/profiles":
+            return self._json(profiles.load())
         if path == "/api/fonts":
             return self._json({"hershey": hershey_names(), "default": HERSHEY_DEFAULT,
                                "system": list(system_fonts().keys())})
@@ -172,8 +201,10 @@ class Handler(BaseHTTPRequestHandler):
         elif act == "jog":
             grbl.jog(float(req.get("x", 0)), float(req.get("y", 0)), float(req.get("z", 0)),
                      float(req.get("feed", 500)))
-        elif act == "jogcancel":
-            grbl.jog_cancel()
+        elif act == "jogstart":   # jog contínuo; repetir a cada <0.7 s (keep-alive) enquanto o botão estiver preso
+            grbl.jog_hold(_dir(req, "x"), _dir(req, "y"), _dir(req, "z"), _num(req, "feed", 500.0, 1, 100000))
+        elif act in ("jogstop", "jogcancel"):
+            grbl.jog_stop()
         elif act == "home":
             grbl.send_line("$H", wait=60)
         elif act == "unlock":
@@ -205,8 +236,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"text": text})
             if path == "/api/draw":
                 from . import voice
-                strokes = voice.fit_strokes(voice.draw(str(req["prompt"])), _num(req, "draw_size", 80, 5, 500),
-                                            _num(req, "margin", 0.0, 0, 1000))
+                strokes = voice.fit_strokes(voice.draw(str(req["prompt"])), _num(req, "draw_size", 80, 5, 500))
+                strokes = place(strokes, bounds(strokes), _num(req, "rotation", 0.0, -3600, 3600),
+                                _quadrant(req), _num(req, "margin", 0.0, 0, 1000))
                 res = generate(strokes, _gcode_opts(req))
                 return self._json({"gcode": res.gcode, "strokes": res.strokes,
                                    "stats": res.stats, "warnings": res.warnings})
@@ -216,6 +248,17 @@ class Handler(BaseHTTPRequestHandler):
                 from .pdfio import extract_pages
                 pages = extract_pages(base64.b64decode(req["data"]))
                 return self._json({"pages": pages})
+            if path.startswith("/api/profiles/"):
+                act = path.rsplit("/", 1)[1]
+                if act == "autosave":
+                    profiles.set_autosave(req.get("settings"))
+                elif act == "save":
+                    return self._json({"name": profiles.save(req.get("name"), req.get("settings"))})
+                elif act == "delete":
+                    profiles.delete(req.get("name"))
+                else:
+                    return self._json({"error": "rota inexistente"}, 404)
+                return self._json({"ok": True})
             if path.startswith("/api/serial/"):
                 return self._json(self._serial_post(path, req))
             if path == "/api/generate":

@@ -30,16 +30,67 @@
         <select id="align"><option value="left">Esquerda</option><option value="center">Centro</option><option value="right">Direita</option></select>
       </label>
       <label>Tamanho (mm)<input id="size" type="number" value="8" min="1" step="0.5"></label>
-      <label>Largura da área (mm)<input id="width" type="number" value="" min="1" placeholder="sem quebra"></label>
+      <label>Largura da área (mm)<input id="width" type="number" value="" min="1" placeholder="automática (curso)"></label>
       <label>Espaço entre linhas<input id="line_spacing" type="number" value="1" step="0.1" min="0.5"></label>
       <label>Espaço entre letras<input id="letter_spacing" type="number" value="0" step="0.05"></label>
     </div>
-    <h2>Caneta (eixo Z)</h2>
-    <div class="grid">
-      <label>Z mín — escreve<input id="zmin" type="number" value="-1" step="0.1"></label>
-      <label>Z máx — levantada<input id="zmax" type="number" value="3" step="0.1"></label>
-      <label>Avanço escrita (mm/min)<input id="feed" type="number" value="400" min="1"></label>
-      <label>Avanço Z (mm/min)<input id="zfeed" type="number" value="100" min="1"></label>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="folha" aria-selected="true">Folha</button>
+      <button type="button" role="tab" data-tab="caneta" aria-selected="false">Caneta</button>
+      <button type="button" role="tab" data-tab="vel" aria-selected="false">Velocidade</button>
+      <button type="button" role="tab" data-tab="perfis" aria-selected="false">Perfis</button>
+    </div>
+    <div class="tabpanel" id="tab-folha" role="tabpanel">
+      <div class="grid">
+        <label>Curso máx. X (mm)<input id="travel_x" type="number" value="200" min="1"></label>
+        <label>Curso máx. Y (mm)<input id="travel_y" type="number" value="200" min="1"></label>
+        <label>Margem (mm)<input id="margin" type="number" value="0" min="0" step="0.5"></label>
+        <label>Rotação da folha (°, anti-horário)
+          <span class="rot"><button type="button" id="rotl" class="sec" title="−90°">↺</button><input id="rotation" type="number" value="0" step="5"><button type="button" id="rotr" class="sec" title="+90°">↻</button></span>
+        </label>
+      </div>
+      <div class="quad" role="radiogroup" aria-label="Quadrante do espaço de trabalho">
+        <button type="button" class="sec" data-q="2" role="radio">2º<small>X− Y+</small></button>
+        <button type="button" class="sec" data-q="1" role="radio">1º<small>X+ Y+</small></button>
+        <button type="button" class="sec" data-q="3" role="radio">3º<small>X− Y−</small></button>
+        <button type="button" class="sec" data-q="4" role="radio">4º<small>X+ Y−</small></button>
+      </div>
+      <small class="hint">Quadrante em que a CNC trabalha (origem no canto da folha). O texto quebra para caber no curso X × Y (ou Y × X se girado).</small>
+    </div>
+    <div class="tabpanel" id="tab-caneta" role="tabpanel" hidden>
+      <div class="seg" role="radiogroup" aria-label="Controle da caneta">
+        <label><input type="radio" name="pen" value="z" checked> Eixo Z</label>
+        <label><input type="radio" name="pen" value="servo"> Servo (PWM do spindle)</label>
+      </div>
+      <div class="grid" id="pen_z">
+        <label>Z mín — escreve<input id="zmin" type="number" value="-1" step="0.1"></label>
+        <label>Z máx — levantada<input id="zmax" type="number" value="3" step="0.1"></label>
+      </div>
+      <div class="grid" id="pen_servo" hidden>
+        <label>S — caneta levantada<input id="pen_up" type="number" value="700" min="0" step="10"></label>
+        <label>S — caneta no papel<input id="pen_down" type="number" value="300" min="0" step="10"></label>
+        <label>Espera após mover (s)<input id="pen_dwell" type="number" value="0.25" min="0" max="10" step="0.05"></label>
+        <small class="hint">Usa <code>M3 S…</code> + <code>G4</code>; requer <code>$32=0</code> (modo laser desligado).</small>
+      </div>
+    </div>
+    <div class="tabpanel" id="tab-vel" role="tabpanel" hidden>
+      <div class="grid">
+        <label>Escrita — caneta no papel (mm/min)<input id="feed" type="number" value="400" min="1"></label>
+        <label>Deslocamento — caneta levantada (mm/min)<input id="travel_feed" type="number" value="" min="1" placeholder="rápido (G0)"></label>
+        <label id="zfeed_wrap">Descida da caneta, Z (mm/min)<input id="zfeed" type="number" value="100" min="1"></label>
+      </div>
+      <small class="hint">Deslocamento vazio = <code>G0</code> na velocidade máxima da máquina (<code>$110/$111</code>). Preenchido, o deslocamento usa <code>G1 F…</code>, útil para não balançar a caneta/folha.</small>
+    </div>
+    <div class="tabpanel" id="tab-perfis" role="tabpanel" hidden>
+      <small class="hint">As configurações (exceto o texto) são salvas sozinhas e voltam ao abrir. Aqui você guarda conjuntos nomeados.</small>
+      <div class="row"><select id="profile_list" aria-label="Perfis salvos"></select></div>
+      <div class="row wrap">
+        <button type="button" id="profile_load" class="sec">Carregar</button>
+        <button type="button" id="profile_delete" class="sec">Excluir</button>
+        <button type="button" id="profile_defaults" class="sec" title="Volta tudo ao padrão de fábrica da interface">Restaurar padrões</button>
+      </div>
+      <div class="row"><input id="profile_name" placeholder="Nome do perfil (ex.: Plotter A4 servo)" maxlength="60" autocomplete="off"><button type="button" id="profile_save">Salvar</button></div>
+      <div id="profile_msg" class="hint"></div>
     </div>
     <label class="check"><input id="zero" type="checkbox"> Emitir <code>G92 X0 Y0</code> (posição atual = origem)</label>
     <div id="msgs"></div>
@@ -74,15 +125,15 @@
         </div>
         <div class="pad z"><button data-j="z+">Z+</button><button data-j="z-">Z−</button></div>
         <div class="jopt">
-          <label>Passo (mm)<select id="step"><option>0.1</option><option>1</option><option selected>10</option><option>50</option></select></label>
+          <label title="Toque = 1 passo · segurar = movimento contínuo até soltar">Passo (toque, mm)<select id="step"><option>0.1</option><option>1</option><option selected>10</option><option>50</option></select></label>
           <label>Avanço jog<input id="jfeed" type="number" value="500" min="1"></label>
         </div>
       </div>
       <div class="row wrap">
         <button data-m="zeroxy" class="sec">Zerar XY aqui</button>
         <button data-m="zeroz" class="sec">Zerar Z aqui</button>
-        <button data-m="penup" class="sec">Caneta ↑ (Z máx)</button>
-        <button data-m="pendown" class="sec">Caneta ↓ (Z mín)</button>
+        <button data-m="penup" class="sec">Caneta ↑</button>
+        <button data-m="pendown" class="sec">Caneta ↓</button>
         <button data-m="home" class="sec">$H Home</button>
         <button data-m="unlock" class="sec">$X Destravar</button>
       </div>

@@ -7,6 +7,7 @@ enviados fora da fila.
 """
 from __future__ import annotations
 
+import math
 import re
 import threading
 import time
@@ -15,6 +16,11 @@ from typing import Callable
 
 RX_BUFFER = 127  # bytes úteis do buffer serial da GRBL (128 - 1)
 BAUD = 115200
+
+# Jog contínuo (botão preso): comandos `$J=` curtos, mantidos ~JOG_LOOKAHEAD s à frente do movimento.
+JOG_SEG_SECONDS = 0.15   # movimento coberto por comando
+JOG_LOOKAHEAD = 0.35     # quanto movimento fica enfileirado na placa (limita a "inércia" ao soltar)
+JOG_KEEPALIVE = 0.7      # sem keep-alive do cliente por esse tempo => cancela sozinho
 
 _STATUS_RE = re.compile(r"<([A-Za-z]+)(?::\d+)?\|(.*?)>")
 
@@ -83,6 +89,12 @@ class Grbl:
         self._abort = False
         self._cond = threading.Condition(self._lock)
         self._sync_waiters: list[threading.Event] = []
+        # jog contínuo
+        self._jog_lock = threading.Lock()
+        self._jog_thread: threading.Thread | None = None
+        self._jog_halt = threading.Event()
+        self._jog_key: tuple | None = None
+        self._jog_deadline = 0.0
 
     # ---------------- conexão ----------------
     def connect(self, device: str, baud: int = BAUD, timeout: float = 4.0):
@@ -103,6 +115,7 @@ class Grbl:
         self._start_reader()
 
     def disconnect(self):
+        self._jog_halt.set()
         self._abort = True
         self._stop_reader.set()
         with self._cond:
@@ -217,6 +230,7 @@ class Grbl:
     def stop(self):
         """Aborta: para o stream, hold + soft reset. A caneta fica onde estiver — suba o Z depois."""
         self._abort = True
+        self._jog_halt.set()
         try:
             self.realtime(b"!")
             time.sleep(0.1)
@@ -231,6 +245,8 @@ class Grbl:
         """Envia uma linha avulsa (jog, $H, $X, G92…) e espera o ok/error. Não use durante stream."""
         if self.running:
             raise GrblError("Há um job em execução")
+        if self.jogging:
+            raise GrblError("Jog contínuo em andamento")
         before = len(self.log)
         n = len(line) + 1
         with self._cond:
@@ -261,6 +277,74 @@ class Grbl:
 
     def jog_cancel(self):
         self.realtime(b"\x85")
+
+    @property
+    def jogging(self) -> bool:
+        t = self._jog_thread
+        return bool(t and t.is_alive())
+
+    def jog_hold(self, x: float = 0, y: float = 0, z: float = 0, feed: float = 500.0):
+        """Jog contínuo na direção (x, y, z) enquanto o cliente renovar a chamada (keep-alive).
+
+        Envia vários `$J=` curtos em segundo plano e, ao parar (jog_stop, falta de keep-alive
+        ou erro da GRBL), manda o jog-cancel em tempo real (0x85): a placa freia e descarta o
+        que ainda estava enfileirado. Chamar de novo com a mesma direção só renova o prazo."""
+        if self.running:
+            raise GrblError("Há um job em execução")
+        mag = math.sqrt(x * x + y * y + z * z)
+        if not mag:
+            return
+        key = (round(x / mag, 6), round(y / mag, 6), round(z / mag, 6), float(feed))
+        with self._jog_lock:
+            self._jog_deadline = time.monotonic() + JOG_KEEPALIVE
+            if self.jogging and self._jog_key == key:
+                return
+        self.jog_stop()   # direção/avanço mudou (ou nada ativo)
+        if not self.connected:
+            raise GrblError("Não conectado")
+        with self._jog_lock:
+            self._jog_key = key
+            self._jog_halt = threading.Event()
+            self._jog_thread = threading.Thread(target=self._jog_loop, args=(self._jog_halt, key), daemon=True)
+            self._jog_thread.start()
+
+    def jog_stop(self):
+        with self._jog_lock:
+            t, halt = self._jog_thread, self._jog_halt
+        halt.set()
+        if t and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=1)
+
+    def _jog_loop(self, halt: threading.Event, key: tuple):
+        dx, dy, dz, feed = key
+        seg = max(feed / 60.0 * JOG_SEG_SECONDS, 0.01)
+        axes = " ".join(f"{a}{v * seg:.4f}" for a, v in (("X", dx), ("Y", dy), ("Z", dz)) if v)
+        line = f"$J=G91 G21 {axes} F{feed:g}"
+        n = len(line) + 1
+        errors0, sent, t_end = len(self.errors), 0, time.monotonic()
+        try:
+            while not halt.is_set() and self._ser and time.monotonic() < self._jog_deadline:
+                if len(self.errors) > errors0:   # ex.: error:15 (limite), error:9 (alarme) — não inundar
+                    break
+                if t_end - time.monotonic() > JOG_LOOKAHEAD:
+                    halt.wait(0.02)
+                    continue
+                with self._cond:
+                    if sum(self._pending) + n > RX_BUFFER:
+                        self._cond.wait(0.02)
+                        continue
+                    self._pending.append(n)
+                self._write(line.encode("ascii") + b"\n")
+                sent += 1
+                t_end = max(t_end, time.monotonic()) + JOG_SEG_SECONDS
+        except GrblError as e:
+            self._emit("err", str(e))
+        finally:
+            if sent and self._ser:
+                try:
+                    self.jog_cancel()
+                except GrblError:
+                    pass
 
     # ---------------- streaming ----------------
     def start_stream(self, gcode: str):
